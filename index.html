@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>British City Explorer - 3D Open World</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border: 2px solid #c41e3a;
+            border-radius: 5px;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border: 2px solid #c41e3a;
+            border-radius: 5px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        #fps {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border: 2px solid #c41e3a;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="hud">
+        <div><strong>British City Explorer</strong></div>
+        <div>Position: <span id="posX">0</span>, <span id="posY">0</span>, <span id="posZ">0</span></div>
+        <div>Speed: <span id="speed">0</span> km/h</div>
+    </div>
+    
+    <div id="controls">
+        <div><strong>Controls:</strong></div>
+        <div>W/A/S/D - Move | Space - Jump</div>
+        <div>Mouse - Look Around | Click to lock mouse</div>
+        <div>R - Reset Position</div>
+    </div>
+    
+    <div id="fps">FPS: <span id="fpsValue">0</span></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+// ===== PLAYER CONTROLLER =====
+class Player {
+    constructor(scene, camera, world) {
+        this.scene = scene;
+        this.camera = camera;
+        this.world = world;
+
+        this.position = new THREE.Vector3(0, 2, 0);
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.moveSpeed = 0.15;
+        this.jumpForce = 0.3;
+        this.gravity = 0.02;
+        this.isGrounded = false;
+        this.canJump = true;
+
+        this.pitchObject = new THREE.Object3D();
+        this.yawObject = new THREE.Object3D();
+        this.yawObject.add(this.pitchObject);
+        this.pitchObject.add(this.camera);
+        this.scene.add(this.yawObject);
+
+        this.HALF_PI = Math.PI / 2;
+        this.keys = {};
+        this.mouseSensitivity = 0.002;
+        this.pointerLocked = false;
+
+        document.addEventListener('pointerlockchange', () => {
+            this.pointerLocked = document.pointerLockElement !== null;
+        });
+    }
+
+    handleKeyDown(event) {
+        this.keys[event.key.toLowerCase()] = true;
+        if (event.key === 'r' || event.key === 'R') {
+            this.position.set(0, 10, 50);
+            this.velocity.set(0, 0, 0);
+        }
+    }
+
+    handleKeyUp(event) {
+        this.keys[event.key.toLowerCase()] = false;
+    }
+
+    handleMouseMove(event) {
+        if (!this.pointerLocked) return;
+        const movementX = event.movementX || event.mozMovementX || 0;
+        const movementY = event.movementY || event.mozMovementY || 0;
+        this.yawObject.rotation.y -= movementX * this.mouseSensitivity;
+        this.pitchObject.rotation.x -= movementY * this.mouseSensitivity;
+        this.pitchObject.rotation.x = Math.max(-this.HALF_PI, Math.min(this.HALF_PI, this.pitchObject.rotation.x));
+    }
+
+    update(deltaTime) {
+        const direction = new THREE.Vector3();
+        const forward = new THREE.Vector3(0, 0, -1);
+        const right = new THREE.Vector3(1, 0, 0);
+        forward.applyQuaternion(this.yawObject.quaternion);
+        right.applyQuaternion(this.yawObject.quaternion);
+
+        if (this.keys['w']) direction.add(forward);
+        if (this.keys['s']) direction.sub(forward);
+        if (this.keys['d']) direction.add(right);
+        if (this.keys['a']) direction.sub(right);
+
+        if (direction.length() > 0) {
+            direction.normalize();
+            this.velocity.x += direction.x * this.moveSpeed;
+            this.velocity.z += direction.z * this.moveSpeed;
+        }
+
+        if (this.keys[' '] && this.isGrounded && this.canJump) {
+            this.velocity.y = this.jumpForce;
+            this.isGrounded = false;
+            this.canJump = false;
+        }
+        if (!this.keys[' ']) this.canJump = true;
+
+        this.velocity.y -= this.gravity;
+        this.velocity.x *= 0.9;
+        this.velocity.z *= 0.9;
+
+        const raycaster = new THREE.Raycaster(this.position, new THREE.Vector3(0, -1, 0), 0, 5);
+        const intersects = raycaster.intersectObjects(this.world.terrain.children, true);
+
+        if (intersects.length > 0) {
+            const distance = intersects[0].distance;
+            if (distance < 1.5) {
+                this.isGrounded = true;
+                this.velocity.y = 0;
+                this.position.y = intersects[0].point.y + 1.5;
+            } else {
+                this.isGrounded = false;
+            }
+        } else {
+            this.isGrounded = false;
+        }
+
+        this.position.add(this.velocity);
+        this.yawObject.position.copy(this.position);
+
+        if (this.position.y < -50) {
+            this.position.set(0, 10, 0);
+            this.velocity.set(0, 0, 0);
+        }
+    }
+}
+
+// ===== WORLD GENERATION =====
+class World {
+    constructor(scene) {
+        this.scene = scene;
+        this.terrain = new THREE.Group();
+        this.scene.add(this.terrain);
+        this.createTerrain();
+        this.createBuildings();
+        this.createRoads();
+        this.createBritishLandmarks();
+    }
+
+    createTerrain() {
+        const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+        const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x3d7c2d });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        this.terrain.add(ground);
+
+        const hillGeometry = new THREE.ConeGeometry(50, 30, 32);
+        const hillMaterial = new THREE.MeshLambertMaterial({ color: 0x2d6b1a });
+        const hill = new THREE.Mesh(hillGeometry, hillMaterial);
+        hill.position.set(-200, 0, -300);
+        hill.castShadow = true;
+        hill.receiveShadow = true;
+        this.terrain.add(hill);
+    }
+
+    createBuildings() {
+        const buildings = [
+            { x: -100, z: -100, w: 50, d: 50, h: 80, color: 0xb85c2f },
+            { x: -100, z: 50, w: 60, d: 40, h: 60, color: 0x8b4513 },
+            { x: 100, z: -100, w: 50, d: 50, h: 100, color: 0xc41e3a },
+            { x: 100, z: 50, w: 60, d: 40, h: 70, color: 0x4a4a4a },
+            { x: -200, z: 200, w: 80, d: 60, h: 120, color: 0xb85c2f },
+            { x: 200, z: 200, w: 70, d: 50, h: 90, color: 0x8b4513 },
+        ];
+
+        buildings.forEach(building => {
+            const geometry = new THREE.BoxGeometry(building.w, building.h, building.d);
+            const material = new THREE.MeshLambertMaterial({ color: building.color });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(building.x, building.h / 2, building.z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            this.addWindowsToBuilding(mesh, building);
+            this.terrain.add(mesh);
+        });
+    }
+
+    addWindowsToBuilding(building, config) {
+        const windowSize = 5;
+        const windowGap = 8;
+        const windowMaterial = new THREE.MeshLambertMaterial({ color: 0xffffcc });
+
+        for (let floor = 0; floor < config.h / 15; floor++) {
+            for (let x = 0; x < config.w / windowGap; x++) {
+                const windowGeometry = new THREE.BoxGeometry(windowSize, windowSize, 1);
+                const window = new THREE.Mesh(windowGeometry, windowMaterial);
+                const xPos = -config.w / 2 + windowGap * (x + 0.5) - windowSize / 2;
+                const yPos = -config.h / 2 + 10 + floor * 15;
+                window.position.set(xPos, yPos, config.d / 2 + 0.5);
+                building.add(window);
+            }
+        }
+    }
+
+    createRoads() {
+        const roadMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const roadH = new THREE.Mesh(new THREE.PlaneGeometry(1000, 40), roadMaterial);
+        roadH.rotation.x = -Math.PI / 2;
+        roadH.position.y = 0.01;
+        this.terrain.add(roadH);
+
+        const roadV = new THREE.Mesh(new THREE.PlaneGeometry(40, 1000), roadMaterial);
+        roadV.rotation.x = -Math.PI / 2;
+        roadV.position.y = 0.01;
+        this.terrain.add(roadV);
+        this.addRoadMarkings();
+    }
+
+    addRoadMarkings() {
+        const markingMaterial = new THREE.MeshLambertMaterial({ color: 0xffff00 });
+        for (let i = -500; i < 500; i += 20) {
+            const marking = new THREE.Mesh(new THREE.BoxGeometry(2, 0.5, 4), markingMaterial);
+            marking.position.set(0, 0.05, i);
+            this.terrain.add(marking);
+        }
+    }
+
+    createBritishLandmarks() {
+        this.createPhoneBox(-150, 150);
+        this.createPhoneBox(200, -100);
+        this.createBritishFlag(50, 50);
+        this.createBritishFlag(-150, -150);
+        this.createBusStop(100, 100);
+    }
+
+    createPhoneBox(x, z) {
+        const boxGeometry = new THREE.BoxGeometry(3, 5, 3);
+        const boxMaterial = new THREE.MeshLambertMaterial({ color: 0xc41e3a });
+        const box = new THREE.Mesh(boxGeometry, boxMaterial);
+        box.position.set(x, 2.5, z);
+        box.castShadow = true;
+        this.terrain.add(box);
+    }
+
+    createBritishFlag(x, z) {
+        const poleGeometry = new THREE.CylinderGeometry(1, 1, 20, 8);
+        const poleMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+        pole.position.set(x, 10, z);
+        pole.castShadow = true;
+        this.terrain.add(pole);
+
+        const flagGeometry = new THREE.BoxGeometry(15, 10, 0.5);
+        const flagMaterial = new THREE.MeshLambertMaterial({ color: 0x004687 });
+        const flag = new THREE.Mesh(flagGeometry, flagMaterial);
+        flag.position.set(x + 8, 18, z);
+        flag.castShadow = true;
+        this.terrain.add(flag);
+    }
+
+    createBusStop(x, z) {
+        const roofGeometry = new THREE.BoxGeometry(20, 2, 15);
+        const roofMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+        roof.position.set(x, 4, z);
+        roof.castShadow = true;
+        this.terrain.add(roof);
+
+        const poleGeometry = new THREE.CylinderGeometry(1, 1, 5, 8);
+        const poleMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        for (let i of [-8, 8]) {
+            const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+            pole.position.set(x + i, 2.5, z);
+            pole.castShadow = true;
+            this.terrain.add(pole);
+        }
+    }
+}
+
+// ===== VEHICLE MANAGER =====
+class VehicleManager {
+    constructor(scene, world, player) {
+        this.scene = scene;
+        this.world = world;
+        this.player = player;
+        this.vehicles = [];
+        this.createVehicles();
+    }
+
+    createVehicles() {
+        this.createCar(-150, 0, 0xc41e3a, 'British Sedan');
+        this.createCar(-100, 0, 0x000000, 'Black Cab');
+        this.createCar(150, 50, 0x0087dc, 'Royal Blue Car');
+        this.createDoubleDecker(200, -150);
+    }
+
+    createCar(x, z, color, name) {
+        const car = new THREE.Group();
+        car.name = name;
+
+        const bodyGeometry = new THREE.BoxGeometry(10, 5, 20);
+        const bodyMaterial = new THREE.MeshLambertMaterial({ color: color });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.y = 3;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        car.add(body);
+
+        const windowGeometry = new THREE.BoxGeometry(8, 4, 3);
+        const windowMaterial = new THREE.MeshLambertMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.7 });
+        const window1 = new THREE.Mesh(windowGeometry, windowMaterial);
+        window1.position.set(0, 5, 3);
+        car.add(window1);
+
+        const window2 = new THREE.Mesh(windowGeometry, windowMaterial);
+        window2.position.set(0, 5, -3);
+        car.add(window2);
+
+        this.addWheels(car);
+        car.position.set(x, 2, z);
+        this.scene.add(car);
+        this.vehicles.push({ mesh: car, type: 'car' });
+    }
+
+    createDoubleDecker(x, z) {
+        const bus = new THREE.Group();
+        bus.name = 'Double-Decker Bus';
+
+        const bodyGeometry = new THREE.BoxGeometry(12, 20, 30);
+        const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0xc41e3a });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.y = 10;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        bus.add(body);
+
+        const windowMaterial = new THREE.MeshLambertMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.6 });
+        for (let deck = 0; deck < 2; deck++) {
+            for (let i = 0; i < 3; i++) {
+                const windowGeometry = new THREE.BoxGeometry(6, 4, 3);
+                const window = new THREE.Mesh(windowGeometry, windowMaterial);
+                window.position.set(-3, 5 + deck * 10, -12 + i * 12);
+                bus.add(window);
+
+                const window2 = new THREE.Mesh(windowGeometry, windowMaterial);
+                window2.position.set(3, 5 + deck * 10, -12 + i * 12);
+                bus.add(window2);
+            }
+        }
+
+        this.addWheels(bus, true);
+        bus.position.set(x, 2, z);
+        this.scene.add(bus);
+        this.vehicles.push({ mesh: bus, type: 'bus' });
+    }
+
+    addWheels(vehicle, isBus = false) {
+        const wheelRadius = isBus ? 3 : 2;
+        const wheelGeometry = new THREE.CylinderGeometry(wheelRadius, wheelRadius, 2, 16);
+        const wheelMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+
+        const wheelPositions = isBus
+            ? [[-8, 3, -8], [8, 3, -8], [-8, 3, 8], [8, 3, 8]]
+            : [[-5, 2, -8], [5, 2, -8], [-5, 2, 8], [5, 2, 8]];
+
+        wheelPositions.forEach(pos => {
+            const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+            wheel.rotation.z = Math.PI / 2;
+            wheel.position.set(pos[0], pos[1], pos[2]);
+            wheel.castShadow = true;
+            vehicle.add(wheel);
+        });
+    }
+
+    update(deltaTime) {
+        this.vehicles.forEach(vehicle => {
+            vehicle.mesh.rotation.y += Math.random() * 0.001;
+        });
+    }
+}
+
+// ===== NPC MANAGER =====
+class NPCManager {
+    constructor(scene, world) {
+        this.scene = scene;
+        this.world = world;
+        this.npcs = [];
+        this.createNPCs();
+    }
+
+    createNPCs() {
+        this.createNPC(-50, -50, 0xffdbac);
+        this.createNPC(50, 50, 0xffdbac);
+        this.createNPC(0, 100, 0xff8c00);
+        this.createNPC(-100, 100, 0x00aaff);
+    }
+
+    createNPC(x, z, clothColor) {
+        const npc = new THREE.Group();
+
+        const headGeometry = new THREE.SphereGeometry(2, 16, 16);
+        const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffdbac });
+        const head = new THREE.Mesh(headGeometry, skinMaterial);
+        head.position.y = 7;
+        head.castShadow = true;
+        npc.add(head);
+
+        const bodyGeometry = new THREE.BoxGeometry(3, 5, 2);
+        const clothMaterial = new THREE.MeshLambertMaterial({ color: clothColor });
+        const body = new THREE.Mesh(bodyGeometry, clothMaterial);
+        body.position.y = 3.5;
+        body.castShadow = true;
+        npc.add(body);
+
+        const armGeometry = new THREE.BoxGeometry(1, 4, 1);
+        for (let side of [-1, 1]) {
+            const arm = new THREE.Mesh(armGeometry, skinMaterial);
+            arm.position.set(side * 2.5, 3.5, 0);
+            arm.castShadow = true;
+            npc.add(arm);
+        }
+
+        const legGeometry = new THREE.BoxGeometry(1, 4, 1);
+        const legMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        for (let side of [-1, 1]) {
+            const leg = new THREE.Mesh(legGeometry, legMaterial);
+            leg.position.set(side * 1, 1, 0);
+            leg.castShadow = true;
+            npc.add(leg);
+        }
+
+        npc.position.set(x, 0, z);
+        this.scene.add(npc);
+
+        this.npcs.push({
+            mesh: npc,
+            velocity: new THREE.Vector3(Math.random() * 0.04 - 0.02, 0, Math.random() * 0.04 - 0.02),
+            wanderTimer: Math.random() * 100
+        });
+    }
+
+    update(deltaTime) {
+        this.npcs.forEach(npc => {
+            npc.wanderTimer--;
+            if (npc.wanderTimer <= 0) {
+                npc.velocity.x = Math.random() * 0.04 - 0.02;
+                npc.velocity.z = Math.random() * 0.04 - 0.02;
+                npc.wanderTimer = 50 + Math.random() * 150;
+            }
+            npc.mesh.position.x += npc.velocity.x;
+            npc.mesh.position.z += npc.velocity.z;
+            if (Math.abs(npc.mesh.position.x) > 300) npc.velocity.x *= -1;
+            if (Math.abs(npc.mesh.position.z) > 300) npc.velocity.z *= -1;
+        });
+    }
+}
+
+// ===== MAIN GAME =====
+let scene, camera, renderer, player, world, vehicleManager, npcManager;
+let clock = new THREE.Clock();
+let lastFrameTime = Date.now();
+let frameCount = 0;
+
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 500, 2000);
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 10, 50);
+    camera.lookAt(0, 0, 0);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(100, 200, 100);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.far = 1000;
+    directionalLight.shadow.camera.left = -500;
+    directionalLight.shadow.camera.right = 500;
+    directionalLight.shadow.camera.top = 500;
+    directionalLight.shadow.camera.bottom = -500;
+    scene.add(directionalLight);
+
+    world = new World(scene);
+    player = new Player(scene, camera, world);
+    vehicleManager = new VehicleManager(scene, world, player);
+    npcManager = new NPCManager(scene, world);
+
+    window.addEventListener('resize', onWindowResize);
+    window.addEventListener('keydown', (e) => player.handleKeyDown(e));
+    window.addEventListener('keyup', (e) => player.handleKeyUp(e));
+    window.addEventListener('mousemove', (e) => player.handleMouseMove(e));
+    window.addEventListener('click', () => document.querySelector('canvas').requestPointerLock());
+
+    animate();
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    const deltaTime = clock.getDelta();
+    player.update(deltaTime);
+    vehicleManager.update(deltaTime);
+    npcManager.update(deltaTime);
+    renderer.render(scene, camera);
+    updateHUD();
+    updateFPS();
+}
+
+function updateHUD() {
+    const pos = player.position;
+    document.getElementById('posX').textContent = Math.round(pos.x);
+    document.getElementById('posY').textContent = Math.round(pos.y);
+    document.getElementById('posZ').textContent = Math.round(pos.z);
+    document.getElementById('speed').textContent = Math.round(player.velocity.length() * 36).toString();
+}
+
+function updateFPS() {
+    frameCount++;
+    const now = Date.now();
+    if (now >= lastFrameTime + 1000) {
+        document.getElementById('fpsValue').textContent = frameCount;
+        frameCount = 0;
+        lastFrameTime = now;
+    }
+}
+
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.addEventListener('load', init);
+    </script>
+</body>
+</html>
