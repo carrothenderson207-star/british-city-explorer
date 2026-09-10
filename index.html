@@ -61,6 +61,7 @@
         <div><strong>British City Explorer</strong></div>
         <div>Position: <span id="posX">0</span>, <span id="posY">0</span>, <span id="posZ">0</span></div>
         <div>Speed: <span id="speed">0</span> km/h</div>
+        <div>NPCs: <span id="npcCount">0</span></div>
     </div>
     
     <div id="controls">
@@ -93,6 +94,11 @@ class Player {
         this.yawObject = new THREE.Object3D();
         this.yawObject.add(this.pitchObject);
         this.pitchObject.add(this.camera);
+        
+        // Create visible player body
+        this.playerBody = this.createPlayerBody();
+        this.yawObject.add(this.playerBody);
+        
         this.scene.add(this.yawObject);
 
         this.HALF_PI = Math.PI / 2;
@@ -103,6 +109,51 @@ class Player {
         document.addEventListener('pointerlockchange', () => {
             this.pointerLocked = document.pointerLockElement !== null;
         });
+    }
+
+    createPlayerBody() {
+        const body = new THREE.Group();
+
+        // Head
+        const headGeometry = new THREE.SphereGeometry(1.5, 16, 16);
+        const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffdbac });
+        const head = new THREE.Mesh(headGeometry, skinMaterial);
+        head.position.y = 1.5;
+        head.castShadow = true;
+        body.add(head);
+
+        // Body
+        const bodyGeometry = new THREE.BoxGeometry(1.5, 2.5, 1);
+        const clothMaterial = new THREE.MeshLambertMaterial({ color: 0x0066cc });
+        const bodyMesh = new THREE.Mesh(bodyGeometry, clothMaterial);
+        bodyMesh.position.y = 0;
+        bodyMesh.castShadow = true;
+        body.add(bodyMesh);
+
+        // Arms
+        const armGeometry = new THREE.BoxGeometry(0.5, 2, 0.5);
+        for (let side of [-1, 1]) {
+            const arm = new THREE.Mesh(armGeometry, skinMaterial);
+            arm.position.set(side * 1.2, 0.5, 0);
+            arm.castShadow = true;
+            body.add(arm);
+        }
+
+        // Legs
+        const legGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.5);
+        const legMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        for (let side of [-1, 1]) {
+            const leg = new THREE.Mesh(legGeometry, legMaterial);
+            leg.position.set(side * 0.5, -1.5, 0);
+            leg.castShadow = true;
+            body.add(leg);
+        }
+
+        // Position player model in front of camera
+        body.position.z = -2;
+        body.scale.set(0.6, 0.6, 0.6);
+
+        return body;
     }
 
     handleKeyDown(event) {
@@ -436,22 +487,25 @@ class NPCManager {
     }
 
     createNPCs() {
-        this.createNPC(-50, -50, 0xffdbac);
-        this.createNPC(50, 50, 0xffdbac);
-        this.createNPC(0, 100, 0xff8c00);
-        this.createNPC(-100, 100, 0x00aaff);
+        this.createNPC(-50, -50, 0xffdbac, 0xff8c00);
+        this.createNPC(50, 50, 0xffdbac, 0x0066cc);
+        this.createNPC(0, 100, 0xffdbac, 0xff6600);
+        this.createNPC(-100, 100, 0xffdbac, 0x00aaff);
+        this.createNPC(150, -50, 0xffdbac, 0x33cc00);
     }
 
-    createNPC(x, z, clothColor) {
+    createNPC(x, z, skinColor, clothColor) {
         const npc = new THREE.Group();
 
+        // Head
         const headGeometry = new THREE.SphereGeometry(2, 16, 16);
-        const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffdbac });
+        const skinMaterial = new THREE.MeshLambertMaterial({ color: skinColor });
         const head = new THREE.Mesh(headGeometry, skinMaterial);
         head.position.y = 7;
         head.castShadow = true;
         npc.add(head);
 
+        // Body
         const bodyGeometry = new THREE.BoxGeometry(3, 5, 2);
         const clothMaterial = new THREE.MeshLambertMaterial({ color: clothColor });
         const body = new THREE.Mesh(bodyGeometry, clothMaterial);
@@ -459,6 +513,7 @@ class NPCManager {
         body.castShadow = true;
         npc.add(body);
 
+        // Arms
         const armGeometry = new THREE.BoxGeometry(1, 4, 1);
         for (let side of [-1, 1]) {
             const arm = new THREE.Mesh(armGeometry, skinMaterial);
@@ -467,6 +522,7 @@ class NPCManager {
             npc.add(arm);
         }
 
+        // Legs
         const legGeometry = new THREE.BoxGeometry(1, 4, 1);
         const legMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
         for (let side of [-1, 1]) {
@@ -479,25 +535,45 @@ class NPCManager {
         npc.position.set(x, 0, z);
         this.scene.add(npc);
 
+        // Random movement velocity
+        const speed = 0.02 + Math.random() * 0.02;
+        const angle = Math.random() * Math.PI * 2;
+        
         this.npcs.push({
             mesh: npc,
-            velocity: new THREE.Vector3(Math.random() * 0.04 - 0.02, 0, Math.random() * 0.04 - 0.02),
-            wanderTimer: Math.random() * 100
+            velocity: new THREE.Vector3(Math.cos(angle) * speed, 0, Math.sin(angle) * speed),
+            wanderTimer: Math.random() * 100 + 50,
+            maxWanderTime: 100 + Math.random() * 200
         });
     }
 
     update(deltaTime) {
         this.npcs.forEach(npc => {
+            // Decrease wander timer
             npc.wanderTimer--;
+            
+            // Change direction when timer runs out
             if (npc.wanderTimer <= 0) {
-                npc.velocity.x = Math.random() * 0.04 - 0.02;
-                npc.velocity.z = Math.random() * 0.04 - 0.02;
-                npc.wanderTimer = 50 + Math.random() * 150;
+                const speed = 0.02 + Math.random() * 0.02;
+                const angle = Math.random() * Math.PI * 2;
+                npc.velocity.x = Math.cos(angle) * speed;
+                npc.velocity.z = Math.sin(angle) * speed;
+                npc.wanderTimer = npc.maxWanderTime;
             }
+
+            // Apply movement
             npc.mesh.position.x += npc.velocity.x;
             npc.mesh.position.z += npc.velocity.z;
-            if (Math.abs(npc.mesh.position.x) > 300) npc.velocity.x *= -1;
-            if (Math.abs(npc.mesh.position.z) > 300) npc.velocity.z *= -1;
+
+            // Bounce off boundaries
+            if (Math.abs(npc.mesh.position.x) > 350) {
+                npc.velocity.x *= -1;
+                npc.mesh.position.x = Math.sign(npc.mesh.position.x) * 350;
+            }
+            if (Math.abs(npc.mesh.position.z) > 350) {
+                npc.velocity.z *= -1;
+                npc.mesh.position.z = Math.sign(npc.mesh.position.z) * 350;
+            }
         });
     }
 }
@@ -515,7 +591,6 @@ function init() {
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
     camera.position.set(0, 10, 50);
-    camera.lookAt(0, 0, 0);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -569,6 +644,7 @@ function updateHUD() {
     document.getElementById('posY').textContent = Math.round(pos.y);
     document.getElementById('posZ').textContent = Math.round(pos.z);
     document.getElementById('speed').textContent = Math.round(player.velocity.length() * 36).toString();
+    document.getElementById('npcCount').textContent = npcManager.npcs.length;
 }
 
 function updateFPS() {
