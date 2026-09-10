@@ -52,6 +52,30 @@
             border-radius: 5px;
             font-family: monospace;
         }
+        #gunStorePrompt {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 30px;
+            border: 3px solid #ffcc00;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            font-size: 18px;
+        }
+        .gun-item {
+            padding: 10px;
+            margin: 10px 0;
+            background: rgba(255, 200, 0, 0.2);
+            border: 1px solid #ffcc00;
+            cursor: pointer;
+        }
+        .gun-item:hover {
+            background: rgba(255, 200, 0, 0.4);
+        }
     </style>
 </head>
 <body>
@@ -62,16 +86,30 @@
         <div>Position: <span id="posX">0</span>, <span id="posY">0</span>, <span id="posZ">0</span></div>
         <div>Speed: <span id="speed">0</span> km/h</div>
         <div>NPCs: <span id="npcCount">0</span></div>
+        <div>Gun: <span id="currentGun">None</span></div>
+        <div>Ammo: <span id="ammo">0</span></div>
     </div>
     
     <div id="controls">
         <div><strong>Controls:</strong></div>
         <div>W/A/S/D - Move | Space - Jump</div>
         <div>Mouse - Look Around | Click to lock mouse</div>
-        <div>R - Reset Position</div>
+        <div>R - Reset | V - Camera Mode</div>
+        <div>F - Shoot (when armed)</div>
     </div>
     
     <div id="fps">FPS: <span id="fpsValue">0</span></div>
+
+    <div id="gunStorePrompt">
+        <div><strong>GUN STORE</strong></div>
+        <div style="margin-top: 20px;">Press E to enter. ESC to exit.</div>
+        <div id="gunList" style="margin-top: 20px;">
+            <div class="gun-item" onclick="buyGun(0)">Pistol - 9mm (E then 1)</div>
+            <div class="gun-item" onclick="buyGun(1)">Shotgun (E then 2)</div>
+            <div class="gun-item" onclick="buyGun(2)">Rifle - AR15 (E then 3)</div>
+            <div class="gun-item" onclick="buyGun(3)">SMG - MP5 (E then 4)</div>
+        </div>
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
@@ -95,9 +133,9 @@ class Player {
         this.yawObject.add(this.pitchObject);
         this.pitchObject.add(this.camera);
         
-        // Create visible player body
-        this.playerBody = this.createPlayerBody();
-        this.yawObject.add(this.playerBody);
+        // Create gun model
+        this.gun = this.createGun();
+        this.pitchObject.add(this.gun);
         
         this.scene.add(this.yawObject);
 
@@ -105,63 +143,117 @@ class Player {
         this.keys = {};
         this.mouseSensitivity = 0.002;
         this.pointerLocked = false;
+        
+        // Gun system
+        this.currentGun = null;
+        this.ammo = 0;
+        this.guns = {
+            'Pistol': { name: 'Pistol', ammo: 15, color: 0x333333 },
+            'Shotgun': { name: 'Shotgun', ammo: 8, color: 0x4a4a4a },
+            'Rifle': { name: 'Rifle', ammo: 30, color: 0x666666 },
+            'SMG': { name: 'SMG', ammo: 25, color: 0x555555 }
+        };
 
         document.addEventListener('pointerlockchange', () => {
             this.pointerLocked = document.pointerLockElement !== null;
         });
     }
 
-    createPlayerBody() {
-        const body = new THREE.Group();
+    createGun() {
+        const gun = new THREE.Group();
+        gun.position.set(0.5, -0.3, -1.2);
 
-        // Head
-        const headGeometry = new THREE.SphereGeometry(1.5, 16, 16);
-        const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffdbac });
-        const head = new THREE.Mesh(headGeometry, skinMaterial);
-        head.position.y = 1.5;
-        head.castShadow = true;
-        body.add(head);
+        // Gun barrel
+        const barrelGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.8, 16);
+        const gunMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const barrel = new THREE.Mesh(barrelGeometry, gunMaterial);
+        barrel.rotation.z = Math.PI / 2;
+        barrel.position.z = 0.3;
+        barrel.castShadow = true;
+        gun.add(barrel);
 
-        // Body
-        const bodyGeometry = new THREE.BoxGeometry(1.5, 2.5, 1);
-        const clothMaterial = new THREE.MeshLambertMaterial({ color: 0x0066cc });
-        const bodyMesh = new THREE.Mesh(bodyGeometry, clothMaterial);
-        bodyMesh.position.y = 0;
-        bodyMesh.castShadow = true;
-        body.add(bodyMesh);
+        // Gun grip
+        const gripGeometry = new THREE.BoxGeometry(0.15, 0.4, 0.2);
+        const grip = new THREE.Mesh(gripGeometry, gunMaterial);
+        grip.position.set(-0.1, -0.2, 0);
+        grip.castShadow = true;
+        gun.add(grip);
 
-        // Arms
-        const armGeometry = new THREE.BoxGeometry(0.5, 2, 0.5);
-        for (let side of [-1, 1]) {
-            const arm = new THREE.Mesh(armGeometry, skinMaterial);
-            arm.position.set(side * 1.2, 0.5, 0);
-            arm.castShadow = true;
-            body.add(arm);
-        }
+        gun.visible = false;
+        return gun;
+    }
 
-        // Legs
-        const legGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.5);
-        const legMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
-        for (let side of [-1, 1]) {
-            const leg = new THREE.Mesh(legGeometry, legMaterial);
-            leg.position.set(side * 0.5, -1.5, 0);
-            leg.castShadow = true;
-            body.add(leg);
-        }
+    equipGun(gunName) {
+        this.currentGun = gunName;
+        this.ammo = this.guns[gunName].ammo;
+        this.gun.visible = true;
+        this.gun.children[0].material.color.setHex(this.guns[gunName].color);
+    }
 
-        // Position player model in front of camera
-        body.position.z = -2;
-        body.scale.set(0.6, 0.6, 0.6);
+    unequipGun() {
+        this.currentGun = null;
+        this.ammo = 0;
+        this.gun.visible = false;
+    }
 
-        return body;
+    shoot() {
+        if (!this.currentGun || this.ammo <= 0) return;
+        
+        this.ammo--;
+        
+        // Gun recoil animation
+        this.gun.position.z -= 0.05;
+        setTimeout(() => {
+            this.gun.position.z += 0.05;
+        }, 50);
+
+        // Create bullet
+        const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const bulletMaterial = new THREE.MeshLambertMaterial({ color: 0xffff00 });
+        const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+        
+        const shootDirection = new THREE.Vector3(0, 0, -1);
+        shootDirection.applyQuaternion(this.pitchObject.quaternion);
+        shootDirection.applyQuaternion(this.yawObject.quaternion);
+        
+        bullet.position.copy(this.position);
+        bullet.position.y += 1;
+        bullet.velocity = shootDirection.multiplyScalar(2);
+        
+        this.scene.add(bullet);
+        this.world.bullets.push(bullet);
     }
 
     handleKeyDown(event) {
         this.keys[event.key.toLowerCase()] = true;
+        
         if (event.key === 'r' || event.key === 'R') {
             this.position.set(0, 10, 50);
             this.velocity.set(0, 0, 0);
         }
+        
+        if (event.key === 'f' || event.key === 'F') {
+            this.shoot();
+        }
+        
+        if (event.key === 'e' || event.key === 'E') {
+            // Check if near gun store
+            const gunStorePos = new THREE.Vector3(-150, 0, 150);
+            const distance = this.position.distanceTo(gunStorePos);
+            if (distance < 50) {
+                document.getElementById('gunStorePrompt').style.display = 'block';
+            }
+        }
+        
+        if (event.key === 'Escape') {
+            document.getElementById('gunStorePrompt').style.display = 'none';
+        }
+        
+        // Quick buy guns
+        if (event.key === '1') buyGun(0);
+        if (event.key === '2') buyGun(1);
+        if (event.key === '3') buyGun(2);
+        if (event.key === '4') buyGun(3);
     }
 
     handleKeyUp(event) {
@@ -238,10 +330,13 @@ class World {
         this.scene = scene;
         this.terrain = new THREE.Group();
         this.scene.add(this.terrain);
+        this.bullets = [];
+        
         this.createTerrain();
         this.createBuildings();
         this.createRoads();
         this.createBritishLandmarks();
+        this.createGunStore();
     }
 
     createTerrain() {
@@ -331,6 +426,58 @@ class World {
         this.createBusStop(100, 100);
     }
 
+    createGunStore() {
+        // Gun store building - black with red accents
+        const storeGeometry = new THREE.BoxGeometry(40, 60, 40);
+        const storeMaterial = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const store = new THREE.Mesh(storeGeometry, storeMaterial);
+        store.position.set(-150, 30, 150);
+        store.castShadow = true;
+        store.receiveShadow = true;
+        this.terrain.add(store);
+
+        // Door
+        const doorGeometry = new THREE.BoxGeometry(8, 12, 1);
+        const doorMaterial = new THREE.MeshLambertMaterial({ color: 0xc41e3a });
+        const door = new THREE.Mesh(doorGeometry, doorMaterial);
+        door.position.set(-150, 6, 170);
+        door.castShadow = true;
+        this.terrain.add(door);
+
+        // Sign
+        const signGeometry = new THREE.BoxGeometry(30, 8, 2);
+        const signMaterial = new THREE.MeshLambertMaterial({ color: 0xffcc00 });
+        const sign = new THREE.Mesh(signGeometry, signMaterial);
+        sign.position.set(-150, 52, 155);
+        sign.castShadow = true;
+        this.terrain.add(sign);
+
+        // Sign text (using a canvas texture)
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, 256, 64);
+        ctx.fillStyle = '#c41e3a';
+        ctx.font = 'bold 40px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('GUN STORE', 128, 45);
+        const texture = new THREE.CanvasTexture(canvas);
+        const signTextMaterial = new THREE.MeshLambertMaterial({ map: texture });
+        sign.material = signTextMaterial;
+
+        // Weapon racks (visual)
+        for (let i = 0; i < 3; i++) {
+            const rackGeometry = new THREE.BoxGeometry(2, 25, 8);
+            const rackMaterial = new THREE.MeshLambertMaterial({ color: 0x8b4513 });
+            const rack = new THREE.Mesh(rackGeometry, rackMaterial);
+            rack.position.set(-160 + i * 20, 15, 145);
+            rack.castShadow = true;
+            this.terrain.add(rack);
+        }
+    }
+
     createPhoneBox(x, z) {
         const boxGeometry = new THREE.BoxGeometry(3, 5, 3);
         const boxMaterial = new THREE.MeshLambertMaterial({ color: 0xc41e3a });
@@ -371,6 +518,20 @@ class World {
             pole.position.set(x + i, 2.5, z);
             pole.castShadow = true;
             this.terrain.add(pole);
+        }
+    }
+
+    update(deltaTime) {
+        // Update bullets
+        for (let i = this.bullets.length - 1; i >= 0; i--) {
+            const bullet = this.bullets[i];
+            bullet.position.add(bullet.velocity);
+            
+            // Check if bullet is out of bounds
+            if (bullet.position.y < -50 || Math.abs(bullet.position.x) > 500 || Math.abs(bullet.position.z) > 500) {
+                this.scene.remove(bullet);
+                this.bullets.splice(i, 1);
+            }
         }
     }
 }
@@ -497,7 +658,6 @@ class NPCManager {
     createNPC(x, z, skinColor, clothColor) {
         const npc = new THREE.Group();
 
-        // Head
         const headGeometry = new THREE.SphereGeometry(2, 16, 16);
         const skinMaterial = new THREE.MeshLambertMaterial({ color: skinColor });
         const head = new THREE.Mesh(headGeometry, skinMaterial);
@@ -505,7 +665,6 @@ class NPCManager {
         head.castShadow = true;
         npc.add(head);
 
-        // Body
         const bodyGeometry = new THREE.BoxGeometry(3, 5, 2);
         const clothMaterial = new THREE.MeshLambertMaterial({ color: clothColor });
         const body = new THREE.Mesh(bodyGeometry, clothMaterial);
@@ -513,7 +672,6 @@ class NPCManager {
         body.castShadow = true;
         npc.add(body);
 
-        // Arms
         const armGeometry = new THREE.BoxGeometry(1, 4, 1);
         for (let side of [-1, 1]) {
             const arm = new THREE.Mesh(armGeometry, skinMaterial);
@@ -522,7 +680,6 @@ class NPCManager {
             npc.add(arm);
         }
 
-        // Legs
         const legGeometry = new THREE.BoxGeometry(1, 4, 1);
         const legMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
         for (let side of [-1, 1]) {
@@ -535,7 +692,6 @@ class NPCManager {
         npc.position.set(x, 0, z);
         this.scene.add(npc);
 
-        // Random movement velocity
         const speed = 0.02 + Math.random() * 0.02;
         const angle = Math.random() * Math.PI * 2;
         
@@ -549,10 +705,8 @@ class NPCManager {
 
     update(deltaTime) {
         this.npcs.forEach(npc => {
-            // Decrease wander timer
             npc.wanderTimer--;
             
-            // Change direction when timer runs out
             if (npc.wanderTimer <= 0) {
                 const speed = 0.02 + Math.random() * 0.02;
                 const angle = Math.random() * Math.PI * 2;
@@ -561,11 +715,9 @@ class NPCManager {
                 npc.wanderTimer = npc.maxWanderTime;
             }
 
-            // Apply movement
             npc.mesh.position.x += npc.velocity.x;
             npc.mesh.position.z += npc.velocity.z;
 
-            // Bounce off boundaries
             if (Math.abs(npc.mesh.position.x) > 350) {
                 npc.velocity.x *= -1;
                 npc.mesh.position.x = Math.sign(npc.mesh.position.x) * 350;
@@ -578,8 +730,17 @@ class NPCManager {
     }
 }
 
+// ===== GLOBAL FUNCTIONS =====
+let player;
+
+function buyGun(gunIndex) {
+    const gunNames = ['Pistol', 'Shotgun', 'Rifle', 'SMG'];
+    player.equipGun(gunNames[gunIndex]);
+    document.getElementById('gunStorePrompt').style.display = 'none';
+}
+
 // ===== MAIN GAME =====
-let scene, camera, renderer, player, world, vehicleManager, npcManager;
+let scene, camera, renderer, world, vehicleManager, npcManager;
 let clock = new THREE.Clock();
 let lastFrameTime = Date.now();
 let frameCount = 0;
@@ -633,6 +794,7 @@ function animate() {
     player.update(deltaTime);
     vehicleManager.update(deltaTime);
     npcManager.update(deltaTime);
+    world.update(deltaTime);
     renderer.render(scene, camera);
     updateHUD();
     updateFPS();
@@ -645,6 +807,8 @@ function updateHUD() {
     document.getElementById('posZ').textContent = Math.round(pos.z);
     document.getElementById('speed').textContent = Math.round(player.velocity.length() * 36).toString();
     document.getElementById('npcCount').textContent = npcManager.npcs.length;
+    document.getElementById('currentGun').textContent = player.currentGun || 'None';
+    document.getElementById('ammo').textContent = player.ammo;
 }
 
 function updateFPS() {
